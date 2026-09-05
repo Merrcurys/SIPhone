@@ -55,10 +55,6 @@
 не используются: `MockSipController` эмулирует жизненный цикл вызова — от гудков
 до автоматического завершения. Удобно для быстрой проверки интерфейса.
 
-## Установка приложения
-
-APK-релизы можно скачать с GitHub -[<img align="center" height="60" alt="GitHub" src="https://github.com/user-attachments/assets/1a481370-4323-40e8-94b8-0106b9fc5363" />](https://github.com/Merrcurys/SIPhone/releases)
-
 ## Технологии
 
 - **Kotlin** + Coroutines
