@@ -36,7 +36,7 @@
 ## Демонстрация интерфейса
 
 <p align="center">
-      <img src="https://github.com/user-attachments/assets/f527b37f-844b-4e1e-8a2e-beaeac6c5152" alt="Демонстрация интерфейса" width="1000">      
+      <img src="https://github.com/user-attachments/assets/f527b37f-844b-4e1e-8a2e-beaeac6c5152" alt="Демонстрация интерфейса" width="700">      
 </p>
 
 ## Как работает звонок
@@ -63,7 +63,7 @@ APK-релизы можно скачать с GitHub -[<img align="center" heigh
 
 - **Kotlin** + Coroutines
 - **Jetpack Compose** + Material Design 3
-- **Linphone SDK** (`[org.linphone:linphone-sdk-android](https://github.com/BelledonneCommunications/linphone-sdk)`)
+- **[Linphone SDK](https://github.com/BelledonneCommunications/linphone-sdk)** (`org.linphone:linphone-sdk-android`)
 - Android Gradle Plugin 9.3.2, minSdk 26, targetSdk 36
 
 ## Структура проекта
@@ -98,18 +98,11 @@ app/src/main/java/ru/merrcurys/siphone/
 
 ## Лицензия
 
-Код приложения SiPhone распространяется под лицензией **MIT** —
-см. файл [LICENSE](LICENSE).
-
-```
-Copyright (c) 2026 Себежко Александр Андреевич
-```
+Код приложения SiPhone распространяется под лицензией **MIT**.
 
 VoIP-функции реализованы на **Linphone SDK**
 (`org.linphone:linphone-sdk-android`), который распространяется под
 **GNU AGPL-3.0** (коммерческая лицензия — у Belledonne Communications).
-Полный текст: [LICENSE-AGPL-3.0](LICENSE-AGPL-3.0).
 
 При распространении собранного приложения **весь дистрибутив действует под
-GNU AGPL-3.0**: исходный код приложения доступен по ссылке
-`<адрес репозитория>`.
+GNU AGPL-3.0**.
