@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+   Backup rules for devices older than API 31.
+   SIP credentials (settings_prefs/auth_prefs) must not be backed up.
+-->
+<full-backup-content>
+    <exclude domain="sharedpref" path="settings_prefs.xml"/>
+    <exclude domain="sharedpref" path="auth_prefs.xml"/>
+</full-backup-content>
