@@ -25,6 +25,8 @@ import org.linphone.core.Factory
 import org.linphone.core.Reason
 import org.linphone.core.RegistrationState
 import org.linphone.core.TransportType
+import ru.merrcurys.siphone.data.models.CallType
+import ru.merrcurys.siphone.data.repositories.CallHistoryRepository
 import ru.merrcurys.siphone.data.repositories.SettingsRepository
 
 // Реальная реализация звонков через ядро Linphone.
@@ -35,6 +37,7 @@ class LinphoneSipController(context: Context) : SipCallController {
 
     private val appContext = context.applicationContext
     private val settingsRepository = SettingsRepository(appContext)
+    private val callHistory = CallHistoryRepository.getInstance(appContext)
     private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
 
     // Сериализует регистрацию/снятие с регистрации, чтобы не было гонок между
@@ -46,6 +49,12 @@ class LinphoneSipController(context: Context) : SipCallController {
     private var registeredUri: String? = null
     private var currentCall: Call? = null
     private var ringPlayer: MediaPlayer? = null
+
+    // Журнал звонков (записывается локально)
+    private var currentRecordId: Long? = null
+    private var currentCallStartedAt: Long = 0L
+    private var ringingRemoteUri: String? = null
+    private var ringingCallAccepted = false
 
     private val _callState = MutableStateFlow("Звонок...")
     override val callState: StateFlow<String> = _callState
@@ -109,6 +118,15 @@ class LinphoneSipController(context: Context) : SipCallController {
                 try {
                     Log.d(TAG, "Приложение закрыто — снимаем регистрацию")
                     val hadActiveCall = currentCall != null
+                    // Входящий, так и не отвеченный, помечаем пропущенным
+                    if (!ringingCallAccepted && ringingRemoteUri != null) {
+                        callHistory.addRecord(
+                            ringingRemoteUri ?: "",
+                            CallType.MISSED,
+                            System.currentTimeMillis()
+                        )
+                    }
+                    finishActiveCallLog()
                     currentCall?.runCatching { terminate() }
                     currentCall = null
                     stopRingTone()
@@ -276,6 +294,10 @@ class LinphoneSipController(context: Context) : SipCallController {
         _callState.value = "Звонок..."
         stopRingTone()
         _incomingCaller.value = null
+        currentRecordId = null
+        currentCallStartedAt = 0L
+        ringingRemoteUri = null
+        ringingCallAccepted = false
 
         if (!configureAndRegister(silent = false)) return false
         val core = core ?: return false
@@ -297,6 +319,13 @@ class LinphoneSipController(context: Context) : SipCallController {
                 return false
             }
             currentCall = call
+            // Записываем исходящий звонок в локальный журнал
+            currentCallStartedAt = System.currentTimeMillis()
+            currentRecordId = callHistory.addRecord(
+                number = target,
+                type = CallType.OUTGOING,
+                startedAt = currentCallStartedAt
+            ).id
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Критическая ошибка: ${e.localizedMessage}", e)
@@ -315,6 +344,7 @@ class LinphoneSipController(context: Context) : SipCallController {
         withContext(NonCancellable) {
             try {
                 Log.d(TAG, "Завершение вызова...")
+                finishActiveCallLog()
                 currentCall?.terminate()
                 currentCall = null
                 delay(300)
@@ -348,6 +378,14 @@ class LinphoneSipController(context: Context) : SipCallController {
         if (call.state == Call.State.IncomingReceived ||
             call.state == Call.State.IncomingEarlyMedia
         ) {
+            // Записываем принятый входящий звонок в локальный журнал
+            ringingCallAccepted = true
+            currentCallStartedAt = System.currentTimeMillis()
+            currentRecordId = callHistory.addRecord(
+                number = ringingRemoteUri ?: remoteUriForRecord(call),
+                type = CallType.INCOMING,
+                startedAt = currentCallStartedAt
+            ).id
             runCatching { call.accept() }
                 .onFailure { Log.e(TAG, "Не удалось принять вызов: ${it.localizedMessage}", it) }
         }
@@ -359,6 +397,7 @@ class LinphoneSipController(context: Context) : SipCallController {
         val call = currentCall
         _incomingCaller.value = null
         Log.d(TAG, "Отклоняем входящий звонок")
+        recordMissedIfRinging()
         if (call != null) {
             runCatching {
                 if (call.state == Call.State.IncomingReceived) {
@@ -369,6 +408,8 @@ class LinphoneSipController(context: Context) : SipCallController {
             }
         }
         currentCall = null
+        ringingRemoteUri = null
+        ringingCallAccepted = false
     }
 
     // Управление микрофоном
@@ -487,14 +528,35 @@ class LinphoneSipController(context: Context) : SipCallController {
         ringPlayer = null
     }
 
-    // Имя/номер звонящего для экрана входящего звонка
-    private fun callerLabel(call: Call): String {
-        val remote = call.remoteAddress
-        val displayName = remote?.displayName
-        if (!displayName.isNullOrBlank()) return displayName
-        val username = remote?.username
-        if (!username.isNullOrBlank()) return username
-        return call.remoteAddressAsString?.takeIf { !isMeaningless(it) } ?: "Входящий звонок"
+    // Пишет MISSED, если входящий звонок завершился без ответа (сброшен/отклонён)
+    private fun recordMissedIfRinging() {
+        if (!ringingCallAccepted && ringingRemoteUri != null) {
+            callHistory.addRecord(ringingRemoteUri ?: "", CallType.MISSED, System.currentTimeMillis())
+            ringingRemoteUri = null
+        }
+    }
+
+    // Полный адрес собеседника без схемы (user@domain) для локального журнала
+    private fun remoteUriForRecord(call: Call): String {
+        val uri = call.remoteAddress?.asStringUriOnly() ?: call.remoteAddressAsString ?: ""
+        return uri.removePrefix("sip:").removePrefix("sips:")
+    }
+
+    // Закрывает активную запись журнала — проставляет длительность разговора
+    private fun finishActiveCallLog() {
+        val id = currentRecordId
+        if (id != null) {
+            val seconds = if (currentCallStartedAt > 0) {
+                ((System.currentTimeMillis() - currentCallStartedAt) / 1000).toInt().coerceAtLeast(0)
+            } else {
+                0
+            }
+            callHistory.updateDuration(id, seconds)
+        }
+        currentRecordId = null
+        currentCallStartedAt = 0L
+        ringingRemoteUri = null
+        ringingCallAccepted = false
     }
 
     // Linphone отдает "None"/"null" вместо отсутствующего текста — считаем это пустотой.
@@ -619,7 +681,10 @@ class LinphoneSipController(context: Context) : SipCallController {
                     } else {
                         currentCall = call
                         _isCallEnded.value = false
-                        _incomingCaller.value = callerLabel(call)
+                        // Полный адрес звонящего (user@domain) — по нему UI найдёт контакт
+                        _incomingCaller.value = remoteUriForRecord(call)
+                        ringingRemoteUri = _incomingCaller.value
+                        ringingCallAccepted = false
                         startRingTone()
                     }
                 }
@@ -628,9 +693,15 @@ class LinphoneSipController(context: Context) : SipCallController {
                         stopRingTone()
                         _incomingCaller.value = null
                     }
+                    // Входящий уже записан при ответе (или исходящий при вызове)
+                    ringingRemoteUri = null
+                    ringingCallAccepted = false
                     configureAudioForCall()
                 }
                 Call.State.End, Call.State.Error, Call.State.Released -> {
+                    recordMissedIfRinging()
+                    ringingRemoteUri = null
+                    ringingCallAccepted = false
                     if (call == currentCall) {
                         stopRingTone()
                         _incomingCaller.value = null

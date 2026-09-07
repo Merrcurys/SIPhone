@@ -18,7 +18,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Call
 import androidx.compose.material.icons.filled.CallEnd
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -31,15 +30,19 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ru.merrcurys.siphone.data.models.Contact
 import ru.merrcurys.siphone.ui.theme.appTheme
 
-// Экран входящего звонка: показывается поверх экрана набора, пока приложение открыто.
+// Экран входящего звонка: крупное имя контакта (если найден), мелко — SIP-адрес,
+// аватарка контакта (WEBP). Показывается поверх вкладок, пока приложение открыто.
 @Composable
 fun IncomingCallScreen(
-    caller: String,
+    callerRaw: String,
+    contact: Contact?,
     onAccept: () -> Unit,
     onDecline: () -> Unit
 ) {
@@ -48,6 +51,8 @@ fun IncomingCallScreen(
     val background = Brush.verticalGradient(
         colors = listOf(scheme.primary, scheme.secondary)
     )
+    val rawAddress = displayAddress(callerRaw)
+    val title = contact?.name ?: rawAddress
 
     Box(
         modifier = Modifier
@@ -55,7 +60,7 @@ fun IncomingCallScreen(
             .clickable(
                 interactionSource = screenInteractionSource,
                 indication = null,
-                // Не даём тапам пройти на экран набора под этим оверлеем
+                // Не даём тапам пройти на вкладки под этим оверлеем
                 onClick = {}
             )
             .background(background)
@@ -77,41 +82,37 @@ fun IncomingCallScreen(
                 color = Color.White.copy(alpha = 0.9f)
             )
 
-            Spacer(modifier = Modifier.height(34.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
-            Box(
-                modifier = Modifier
-                    .size(132.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.18f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = null,
-                    modifier = Modifier.size(72.dp),
-                    tint = Color.White
-                )
-            }
+            ContactAvatar(
+                avatarPath = contact?.avatarPath,
+                size = 132.dp,
+                backgroundColor = Color.White.copy(alpha = 0.18f)
+            )
 
-            Spacer(modifier = Modifier.height(30.dp))
+            Spacer(modifier = Modifier.height(26.dp))
 
             Text(
-                text = caller,
-                fontSize = 30.sp,
+                text = title,
+                fontSize = 32.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
                 textAlign = TextAlign.Center,
-                maxLines = 2
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
 
-            Spacer(modifier = Modifier.height(10.dp))
-
-            Text(
-                text = "SIP-звонок",
-                fontSize = 14.sp,
-                color = Color.White.copy(alpha = 0.7f)
-            )
+            if (contact != null) {
+                Spacer(modifier = Modifier.height(8.dp))
+                Text(
+                    text = rawAddress,
+                    fontSize = 14.sp,
+                    color = Color.White.copy(alpha = 0.75f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
 
             Spacer(modifier = Modifier.weight(1f))
 
@@ -187,7 +188,8 @@ private fun IncomingCallButton(
 fun IncomingCallScreenPreview() {
     appTheme {
         IncomingCallScreen(
-            caller = "+7 900 000-00-00",
+            callerRaw = "call2sip05318201@call2sip.onlinepbx.ru",
+            contact = Contact(id = "1", name = "Василий", sipAddress = "call2sip05318201@call2sip.onlinepbx.ru"),
             onAccept = {},
             onDecline = {}
         )

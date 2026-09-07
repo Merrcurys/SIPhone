@@ -20,7 +20,6 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CallEnd
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MicOff
-import androidx.compose.material.icons.filled.Person
 import androidx.compose.material.icons.filled.VolumeDown
 import androidx.compose.material.icons.filled.VolumeUp
 import androidx.compose.material3.Icon
@@ -43,9 +42,11 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import ru.merrcurys.siphone.data.models.Contact
 import ru.merrcurys.siphone.sip.SipManager
 import ru.merrcurys.siphone.ui.theme.appTheme
 import kotlinx.coroutines.delay
@@ -53,6 +54,7 @@ import kotlinx.coroutines.delay
 @Composable
 fun CallScreen(
     phoneNumber: String,
+    contact: Contact? = null,
     onHangup: () -> Unit,
     sipManager: SipManager? = null,
     autoDial: Boolean = true
@@ -84,6 +86,8 @@ fun CallScreen(
     val background = Brush.verticalGradient(
         colors = listOf(scheme.primary, scheme.secondary)
     )
+    val rawAddress = displayAddress(phoneNumber)
+    val callTitle = contact?.name ?: rawAddress
 
     LaunchedEffect(phoneNumber, autoDial) {
         if (autoDial) {
@@ -150,31 +154,35 @@ fun CallScreen(
 
             Spacer(modifier = Modifier.height(28.dp))
 
-            Box(
-                modifier = Modifier
-                    .size(132.dp)
-                    .clip(CircleShape)
-                    .background(Color.White.copy(alpha = 0.18f)),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.Person,
-                    contentDescription = null,
-                    modifier = Modifier.size(72.dp),
-                    tint = Color.White
-                )
-            }
+            ContactAvatar(
+                avatarPath = contact?.avatarPath,
+                size = 132.dp,
+                backgroundColor = Color.White.copy(alpha = 0.18f)
+            )
 
-            Spacer(modifier = Modifier.height(26.dp))
+            Spacer(modifier = Modifier.height(24.dp))
 
             Text(
-                text = phoneNumber,
+                text = callTitle,
                 fontSize = 30.sp,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,
                 textAlign = TextAlign.Center,
-                maxLines = 2
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
+
+            if (contact != null) {
+                Spacer(modifier = Modifier.height(4.dp))
+                Text(
+                    text = rawAddress,
+                    fontSize = 14.sp,
+                    color = Color.White.copy(alpha = 0.75f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis
+                )
+            }
 
             Spacer(modifier = Modifier.height(10.dp))
 

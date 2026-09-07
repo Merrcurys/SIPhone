@@ -22,7 +22,6 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.automirrored.filled.ArrowBack
 import androidx.compose.material.icons.filled.AccountCircle
 import androidx.compose.material.icons.filled.DarkMode
 import androidx.compose.material.icons.filled.Dns
@@ -64,6 +63,7 @@ import androidx.compose.ui.unit.sp
 import ru.merrcurys.siphone.BuildConfig
 import ru.merrcurys.siphone.data.repositories.SettingsRepository
 import ru.merrcurys.siphone.data.repositories.ThemeMode
+import ru.merrcurys.siphone.ui.components.appDecorativeBackground
 import ru.merrcurys.siphone.ui.theme.appTheme
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
@@ -76,8 +76,8 @@ private const val PROJECT_SOURCE_URL = "https://github.com/Merrcurys/SiPhone"
 fun SettingsScreen(
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
-    onBack: () -> Unit = {},
-    onMockServerChange: (Boolean) -> Unit = {}
+    onMockServerChange: (Boolean) -> Unit = {},
+    modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
     val settingsRepository = remember { SettingsRepository(context) }
@@ -93,7 +93,7 @@ fun SettingsScreen(
     var showAboutSheet by remember { mutableStateOf(false) }
 
     Box(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxSize()
             .background(scheme.background)
             .drawBehind {
@@ -135,45 +135,7 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp)
         ) {
-            Spacer(modifier = Modifier.height(12.dp))
-
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                IconButton(onClick = onBack) {
-                    Box(
-                        modifier = Modifier
-                            .size(40.dp)
-                            .clip(CircleShape)
-                            .background(scheme.primary.copy(alpha = 0.10f)),
-                        contentAlignment = Alignment.Center
-                    ) {
-                        Icon(
-                            imageVector = Icons.AutoMirrored.Filled.ArrowBack,
-                            contentDescription = "Назад",
-                            tint = scheme.primary,
-                            modifier = Modifier.size(22.dp)
-                        )
-                    }
-                }
-                Spacer(modifier = Modifier.width(12.dp))
-                Column {
-                    Text(
-                        text = "Настройки",
-                        style = MaterialTheme.typography.headlineSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = scheme.onBackground
-                    )
-                    Text(
-                        text = "SIP-соединение и оформление",
-                        style = MaterialTheme.typography.bodySmall,
-                        color = scheme.onSurfaceVariant
-                    )
-                }
-            }
-
-            Spacer(modifier = Modifier.height(28.dp))
+            Spacer(modifier = Modifier.height(14.dp))
 
             SectionLabel(text = "Внешний вид")
 
@@ -414,7 +376,7 @@ fun SettingsScreen(
                         .fillMaxWidth()
                         .clip(RoundedCornerShape(16.dp))
                         .clickable { showAboutSheet = true }
-                        .padding(horizontal = 14.dp, vertical = 12.dp),
+                        .padding(horizontal = 14.dp, vertical = 18.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Icon(
@@ -470,13 +432,35 @@ private fun AboutRow(label: String, value: String) {
 @Composable
 private fun AboutSheet(onDismiss: () -> Unit) {
     val scheme = MaterialTheme.colorScheme
-    ModalBottomSheet(onDismissRequest = onDismiss) {
+    ModalBottomSheet(
+        onDismissRequest = onDismiss,
+        containerColor = Color.Transparent,
+        dragHandle = null
+    ) {
         Column(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(start = 24.dp, end = 24.dp, bottom = 32.dp)
+                .clip(RoundedCornerShape(topStart = 28.dp, topEnd = 28.dp))
+                .appDecorativeBackground()
+                .padding(start = 24.dp, end = 24.dp, top = 12.dp, bottom = 32.dp)
                 .verticalScroll(rememberScrollState())
         ) {
+            // Ручка окна — внутри декоративной панели
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(bottom = 14.dp),
+                contentAlignment = Alignment.Center
+            ) {
+                Box(
+                    modifier = Modifier
+                        .width(40.dp)
+                        .height(4.dp)
+                        .clip(RoundedCornerShape(2.dp))
+                        .background(scheme.onSurface.copy(alpha = 0.35f))
+                )
+            }
+
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(
                     imageVector = Icons.Default.Info,
@@ -497,21 +481,8 @@ private fun AboutSheet(onDismiss: () -> Unit) {
             AboutRow(label = "Версия", value = "v${BuildConfig.VERSION_NAME}")
             AboutRow(label = "Автор", value = APP_AUTHOR)
 
-            Spacer(modifier = Modifier.height(20.dp))
-
-            Text(
-                text = "$APP_NAME — SIP-звонилка.\n\n" +
-                    "Код приложения распространяется под лицензией MIT.\n\n" +
-                    "VoIP-функции реализованы на Linphone SDK (linphone-sdk-android), " +
-                    "который распространяется под GNU AGPL-3.0.\n\n" +
-                    "Весь дистрибутив приложения распространяется под GNU AGPL-3.0. " +
-                    "Исходный код доступен: $PROJECT_SOURCE_URL.\n\n" +
-                    "Полные тексты лицензий:\n" +
-                    "• MIT: https://opensource.org/licenses/MIT\n" +
-                    "• GNU AGPL-3.0: https://www.gnu.org/licenses/agpl-3.0.html",
-                style = MaterialTheme.typography.bodyMedium,
-                color = scheme.onSurfaceVariant
-            )
+            AboutRow(label = "Лицензия 1", value = "MIT")
+            AboutRow(label = "Лицензия 2", value = "GNU AGPL-3.0")
 
             Spacer(modifier = Modifier.height(8.dp))
         }
