@@ -39,7 +39,7 @@
 ## Демонстрация интерфейса
 
 <p align="center">
-      <img src="https://github.com/user-attachments/assets/f527b37f-844b-4e1e-8a2e-beaeac6c5152" alt="Демонстрация интерфейса" width="700">      
+      <img src="https://github.com/user-attachments/assets/0426a685-8cb3-44f6-b59b-2c3543ec4fe0" alt="Демонстрация интерфейса" width="700">      
 </p>
 
 ## Как работает звонок
