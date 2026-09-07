@@ -16,15 +16,13 @@ interface SipCallController {
     // Номер/SIP-имя звонящего, пока идёт входящий звонок; null, если входящего нет
     val incomingCaller: StateFlow<String?>
 
-    fun initCore()
-
     // Регистрация на сервере, пока приложение открыто (входящие звонки)
     suspend fun startRegistration()
 
     // Снятие с регистрации при уходе приложения в фон/закрытии
     suspend fun stopRegistration()
 
-    suspend fun makeCall(phoneNumber: String, sipId: String?, sipPassword: String?): Boolean
+    suspend fun makeCall(phoneNumber: String): Boolean
 
     suspend fun endCall()
 

@@ -24,17 +24,11 @@ class SipManager(context: Context) : SipCallController {
     override val isRegistered: StateFlow<Boolean> get() = delegate.isRegistered
     override val incomingCaller: StateFlow<String?> get() = delegate.incomingCaller
 
-    override fun initCore() = delegate.initCore()
-
     override suspend fun startRegistration() = delegate.startRegistration()
 
     override suspend fun stopRegistration() = delegate.stopRegistration()
 
-    override suspend fun makeCall(
-        phoneNumber: String,
-        sipId: String?,
-        sipPassword: String?
-    ): Boolean = delegate.makeCall(phoneNumber, sipId, sipPassword)
+    override suspend fun makeCall(phoneNumber: String): Boolean = delegate.makeCall(phoneNumber)
 
     override suspend fun endCall() = delegate.endCall()
 

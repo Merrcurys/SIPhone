@@ -41,8 +41,6 @@ class MockSipController(private val context: Context) : SipCallController {
     private val mockScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var mockCallJob: Job? = null
 
-    override fun initCore() = Unit
-
     override suspend fun startRegistration() = Unit
 
     override suspend fun stopRegistration() = Unit
@@ -51,11 +49,7 @@ class MockSipController(private val context: Context) : SipCallController {
 
     override fun declineIncomingCall() = Unit
 
-    override suspend fun makeCall(
-        phoneNumber: String,
-        sipId: String?,
-        sipPassword: String?
-    ): Boolean {
+    override suspend fun makeCall(phoneNumber: String): Boolean {
         startMockCall(phoneNumber.trim())
         return true
     }

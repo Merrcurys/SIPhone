@@ -70,12 +70,6 @@ class LinphoneSipController(context: Context) : SipCallController {
     private val _incomingCaller = MutableStateFlow<String?>(null)
     override val incomingCaller: StateFlow<String?> = _incomingCaller
 
-    // Инициализация SIP ядра (создаётся лениво при регистрации)
-    override fun initCore() {
-        if (core != null) return
-        runCatching { createCore() }
-    }
-
     private fun createCore(): Core {
         val isDebuggable = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (isDebuggable) {
@@ -259,11 +253,7 @@ class LinphoneSipController(context: Context) : SipCallController {
     }
 
     // Инициирование исходящего вызова
-    override suspend fun makeCall(
-        phoneNumber: String,
-        sipId: String?,
-        sipPassword: String?
-    ): Boolean {
+    override suspend fun makeCall(phoneNumber: String): Boolean {
         val target = phoneNumber.trim()
         if (target.isEmpty()) {
             _callState.value = "Введите номер или SIP-адрес"
@@ -292,6 +282,9 @@ class LinphoneSipController(context: Context) : SipCallController {
 
         try {
             Log.d(TAG, "Инициирование вызова...")
+            // Убеждаемся, что микрофон не остался выключенным от прошлого вызова
+            audioManager.isMicrophoneMute = false
+            core.isMicEnabled = true
             val targetAddress = core.createSipAddress(toSipUri(target, serverIp))
             if (targetAddress == null) {
                 _callState.value = "Неверный формат номера или SIP URI"
@@ -348,6 +341,10 @@ class LinphoneSipController(context: Context) : SipCallController {
         }
         _incomingCaller.value = null
         Log.d(TAG, "Принимаем входящий звонок")
+        // Микрофон должен быть активен сразу после ответа
+        _isMuted.value = false
+        audioManager.isMicrophoneMute = false
+        core?.isMicEnabled = true
         if (call.state == Call.State.IncomingReceived ||
             call.state == Call.State.IncomingEarlyMedia
         ) {
@@ -435,7 +432,10 @@ class LinphoneSipController(context: Context) : SipCallController {
     private fun configureAudioForCall() {
         try {
             audioManager.mode = AudioManager.MODE_IN_COMMUNICATION
-            if (!audioManager.isMicrophoneMute) {
+            if (!_isMuted.value) {
+                // Сбрасываем возможный «залипший» mute от прошлого вызова, чтобы
+                // микрофон точно был включён, когда начинается разговор.
+                audioManager.isMicrophoneMute = false
                 core?.isMicEnabled = true
                 _isMuted.value = false
                 Log.d(TAG, "Микрофон включен при установлении соединения")
@@ -553,6 +553,7 @@ class LinphoneSipController(context: Context) : SipCallController {
             Reason.TemporarilyUnavailable, Reason.NotAnswered -> "Абонент не отвечает"
             Reason.DoNotDisturb -> "Абонент сейчас не принимает звонки"
             Reason.AddressIncomplete -> "Неверный формат номера"
+            Reason.NotAcceptable -> "Сервер отклонил медиапоток (488): нет общего аудио-кодека"
             Reason.IOError, Reason.NoResponse, Reason.ServerTimeout ->
                 "Нет связи с сервером: проверьте интернет"
             else -> null

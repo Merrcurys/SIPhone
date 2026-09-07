@@ -243,8 +243,6 @@ fun MainScreen(
         if (callNumber != null) {
             CallScreen(
                 phoneNumber = callNumber,
-                sipId = settingsRepository.getSipId(),
-                sipPassword = settingsRepository.getSipPassword(),
                 onHangup = finishCall,
                 sipManager = sipManager,
                 autoDial = incomingNumber == null

@@ -53,8 +53,6 @@ import kotlinx.coroutines.delay
 @Composable
 fun CallScreen(
     phoneNumber: String,
-    sipId: String?,
-    sipPassword: String?,
     onHangup: () -> Unit,
     sipManager: SipManager? = null,
     autoDial: Boolean = true
@@ -87,9 +85,9 @@ fun CallScreen(
         colors = listOf(scheme.primary, scheme.secondary)
     )
 
-    LaunchedEffect(phoneNumber, sipId, sipPassword, autoDial) {
+    LaunchedEffect(phoneNumber, autoDial) {
         if (autoDial) {
-            manager.makeCall(phoneNumber, sipId, sipPassword)
+            manager.makeCall(phoneNumber)
         }
     }
 
@@ -309,8 +307,6 @@ fun CallScreenPreview() {
         Box(modifier = Modifier.fillMaxSize()) {
             CallScreen(
                 phoneNumber = "+7 900 000-00-00",
-                sipId = "1001",
-                sipPassword = "password123",
                 onHangup = {}
             )
         }
