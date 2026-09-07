@@ -5,6 +5,7 @@ import kotlinx.coroutines.flow.StateFlow
 // Контракт контроллера звонков, единый для реального Linphone и mock-режима.
 interface SipCallController {
     val callState: StateFlow<String>
+    val isInCall: StateFlow<Boolean>
     val isMuted: StateFlow<Boolean>
     val isSpeakerOn: StateFlow<Boolean>
     val isCallEnded: StateFlow<Boolean>

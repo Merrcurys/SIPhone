@@ -30,8 +30,10 @@ import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -62,9 +64,23 @@ fun CallScreen(
     val sipManager = remember { SipManager(context) }
 
     val callStateText by sipManager.callState.collectAsState()
+    val isInCall by sipManager.isInCall.collectAsState()
     val isMuted by sipManager.isMuted.collectAsState()
     val isSpeakerOn by sipManager.isSpeakerOn.collectAsState()
     val isCallEnded by sipManager.isCallEnded.collectAsState()
+
+    // Таймер длительности разговора, отсчитывается после ответа собеседника
+    var callDurationSeconds by remember { mutableStateOf(0) }
+
+    LaunchedEffect(isInCall) {
+        if (isInCall) {
+            callDurationSeconds = 0
+            while (true) {
+                delay(1000)
+                callDurationSeconds++
+            }
+        }
+    }
 
     val scheme = MaterialTheme.colorScheme
     val background = Brush.verticalGradient(
@@ -133,11 +149,15 @@ fun CallScreen(
             Spacer(modifier = Modifier.weight(1f))
 
             Text(
-                text = callStateText.uppercase(),
-                fontSize = 13.sp,
-                fontWeight = FontWeight.SemiBold,
-                letterSpacing = 2.sp,
-                color = Color.White.copy(alpha = 0.85f)
+                text = if (isInCall) {
+                    formatCallDuration(callDurationSeconds)
+                } else {
+                    callStateText.uppercase()
+                },
+                fontSize = if (isInCall) 26.sp else 13.sp,
+                fontWeight = if (isInCall) FontWeight.Bold else FontWeight.SemiBold,
+                letterSpacing = if (isInCall) 0.sp else 2.sp,
+                color = Color.White.copy(alpha = 0.9f)
             )
 
             Spacer(modifier = Modifier.height(28.dp))
@@ -256,6 +276,18 @@ fun CallScreen(
 
             Spacer(modifier = Modifier.height(56.dp))
         }
+    }
+}
+
+// Формат длительности разговора: 05:23, а от часа — 1:02:03
+private fun formatCallDuration(totalSeconds: Int): String {
+    val hours = totalSeconds / 3600
+    val minutes = (totalSeconds % 3600) / 60
+    val seconds = totalSeconds % 60
+    return if (hours > 0) {
+        "%d:%02d:%02d".format(hours, minutes, seconds)
+    } else {
+        "%02d:%02d".format(minutes, seconds)
     }
 }
 

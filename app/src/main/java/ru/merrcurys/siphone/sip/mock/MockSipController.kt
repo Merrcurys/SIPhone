@@ -20,6 +20,9 @@ class MockSipController(private val context: Context) : SipCallController {
     private val _callState = MutableStateFlow("Звонок...")
     override val callState: StateFlow<String> = _callState
 
+    private val _isInCall = MutableStateFlow(false)
+    override val isInCall: StateFlow<Boolean> = _isInCall
+
     private val _isMuted = MutableStateFlow(false)
     override val isMuted: StateFlow<Boolean> = _isMuted
 
@@ -48,6 +51,7 @@ class MockSipController(private val context: Context) : SipCallController {
         mockCallJob = null
         _isMuted.value = false
         _isSpeakerOn.value = false
+        _isInCall.value = false
         _isCallEnded.value = true
     }
 
@@ -62,6 +66,7 @@ class MockSipController(private val context: Context) : SipCallController {
     private fun startMockCall(phoneNumber: String) {
         mockCallJob?.cancel()
         _isCallEnded.value = false
+        _isInCall.value = false
         _isMuted.value = false
         _isSpeakerOn.value = false
         _callState.value = "Подключение к mock-серверу..."
@@ -76,10 +81,12 @@ class MockSipController(private val context: Context) : SipCallController {
                 releaseRingback(ringback)
             }
             _callState.value = "Соединение установлено"
+            _isInCall.value = true
             delay(MOCK_ANSWER_MS)
             _callState.value = "Идёт mock-звонок"
             delay(MOCK_DURATION_MS)
             _callState.value = "Вызов завершен"
+            _isInCall.value = false
             _isCallEnded.value = true
         }
     }

@@ -17,6 +17,7 @@ class SipManager(context: Context) : SipCallController {
         }
 
     override val callState: StateFlow<String> get() = delegate.callState
+    override val isInCall: StateFlow<Boolean> get() = delegate.isInCall
     override val isMuted: StateFlow<Boolean> get() = delegate.isMuted
     override val isSpeakerOn: StateFlow<Boolean> get() = delegate.isSpeakerOn
     override val isCallEnded: StateFlow<Boolean> get() = delegate.isCallEnded

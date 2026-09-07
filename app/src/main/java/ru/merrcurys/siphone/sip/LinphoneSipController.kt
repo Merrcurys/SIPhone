@@ -35,6 +35,10 @@ class LinphoneSipController(private val context: Context) : SipCallController {
     private val _callState = MutableStateFlow("Звонок...")
     override val callState: StateFlow<String> = _callState
 
+    // true, когда собеседник ответил и разговор идёт (показываем таймер длительности)
+    private val _isInCall = MutableStateFlow(false)
+    override val isInCall: StateFlow<Boolean> = _isInCall
+
     private val _isMuted = MutableStateFlow(false)
     override val isMuted: StateFlow<Boolean> = _isMuted
 
@@ -102,6 +106,7 @@ class LinphoneSipController(private val context: Context) : SipCallController {
         }
 
         _isCallEnded.value = false
+        _isInCall.value = false
         _isMuted.value = false
 
         try {
@@ -209,6 +214,7 @@ class LinphoneSipController(private val context: Context) : SipCallController {
                 resetAudioForIdle()
                 _isMuted.value = false
                 _isSpeakerOn.value = false
+                _isInCall.value = false
                 _isCallEnded.value = true
                 Log.d(TAG, "Ресурсы успешно освобождены")
             } catch (e: Exception) {
@@ -419,6 +425,7 @@ class LinphoneSipController(private val context: Context) : SipCallController {
                 configureAudioForCall()
             }
 
+            _isInCall.value = state in IN_CALL_STATES
             _isCallEnded.value = state == Call.State.End || state == Call.State.Error || state == Call.State.Released
         }
 
@@ -436,6 +443,15 @@ class LinphoneSipController(private val context: Context) : SipCallController {
             RegistrationState.Ok,
             RegistrationState.Failed,
             RegistrationState.Cleared
+        )
+        // Состояния, при которых разговор уже идёт (таймер длительности звонка)
+        private val IN_CALL_STATES = setOf(
+            Call.State.Connected,
+            Call.State.StreamsRunning,
+            Call.State.Paused,
+            Call.State.PausedByRemote,
+            Call.State.Resuming,
+            Call.State.UpdatedByRemote
         )
     }
 }
