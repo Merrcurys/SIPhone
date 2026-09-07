@@ -21,8 +21,14 @@ class SipManager(context: Context) : SipCallController {
     override val isMuted: StateFlow<Boolean> get() = delegate.isMuted
     override val isSpeakerOn: StateFlow<Boolean> get() = delegate.isSpeakerOn
     override val isCallEnded: StateFlow<Boolean> get() = delegate.isCallEnded
+    override val isRegistered: StateFlow<Boolean> get() = delegate.isRegistered
+    override val incomingCaller: StateFlow<String?> get() = delegate.incomingCaller
 
     override fun initCore() = delegate.initCore()
+
+    override suspend fun startRegistration() = delegate.startRegistration()
+
+    override suspend fun stopRegistration() = delegate.stopRegistration()
 
     override suspend fun makeCall(
         phoneNumber: String,
@@ -31,6 +37,10 @@ class SipManager(context: Context) : SipCallController {
     ): Boolean = delegate.makeCall(phoneNumber, sipId, sipPassword)
 
     override suspend fun endCall() = delegate.endCall()
+
+    override fun acceptIncomingCall() = delegate.acceptIncomingCall()
+
+    override fun declineIncomingCall() = delegate.declineIncomingCall()
 
     override fun toggleMute() = delegate.toggleMute()
 

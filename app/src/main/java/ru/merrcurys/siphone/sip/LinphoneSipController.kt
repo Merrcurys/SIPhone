@@ -2,7 +2,9 @@ package ru.merrcurys.siphone.sip
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
+import android.media.AudioAttributes
 import android.media.AudioManager
+import android.media.MediaPlayer
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
 import android.util.Log
@@ -10,6 +12,8 @@ import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.linphone.core.Account
 import org.linphone.core.Address
@@ -24,13 +28,24 @@ import org.linphone.core.TransportType
 import ru.merrcurys.siphone.data.repositories.SettingsRepository
 
 // Реальная реализация звонков через ядро Linphone.
-class LinphoneSipController(private val context: Context) : SipCallController {
+// Аккаунт регистрируется, пока приложение открыто — тогда приходят входящие звонки.
+// Как только приложение уходит в фон/закрывается, регистрация снимается (stopRegistration),
+// поэтому позвонить в закрытое приложение нельзя.
+class LinphoneSipController(context: Context) : SipCallController {
 
-    private val settingsRepository = SettingsRepository(context)
-    private val audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+    private val appContext = context.applicationContext
+    private val settingsRepository = SettingsRepository(appContext)
+    private val audioManager = appContext.getSystemService(Context.AUDIO_SERVICE) as AudioManager
+
+    // Сериализует регистрацию/снятие с регистрации, чтобы не было гонок между
+    // фоновой регистрацией (ON_START) и регистрацией при исходящем звонке.
+    private val registrationMutex = Mutex()
 
     private var core: Core? = null
+    private var account: Account? = null
+    private var registeredUri: String? = null
     private var currentCall: Call? = null
+    private var ringPlayer: MediaPlayer? = null
 
     private val _callState = MutableStateFlow("Звонок...")
     override val callState: StateFlow<String> = _callState
@@ -48,37 +63,202 @@ class LinphoneSipController(private val context: Context) : SipCallController {
     private val _isCallEnded = MutableStateFlow(false)
     override val isCallEnded: StateFlow<Boolean> = _isCallEnded
 
-    // Инициализация SIP ядра
+    private val _isRegistered = MutableStateFlow(false)
+    override val isRegistered: StateFlow<Boolean> = _isRegistered
+
+    // Номер/SIP-имя звонящего, пока идёт входящий звонок
+    private val _incomingCaller = MutableStateFlow<String?>(null)
+    override val incomingCaller: StateFlow<String?> = _incomingCaller
+
+    // Инициализация SIP ядра (создаётся лениво при регистрации)
     override fun initCore() {
         if (core != null) return
+        runCatching { createCore() }
+    }
 
-        val isDebuggable = context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+    private fun createCore(): Core {
+        val isDebuggable = appContext.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
         if (isDebuggable) {
             Factory.instance().enableLogcatLogs(true)
         }
 
-        core = Factory.instance().createCore(null, null, context).apply {
+        return Factory.instance().createCore(null, null, appContext).apply {
             addListener(coreListener)
             isMicEnabled = true
-            setRingback(RingbackTone.file(context).absolutePath)
+            setRingback(RingbackTone.file(appContext).absolutePath)
             config.setBool("sound", "echocancellation", true)
             config.setBool("sound", "echo_limiter", true)
-        }
+
+            val transports = this.transports
+            transports.udpPort = 5060
+            transports.tcpPort = 0
+            transports.tlsPort = 0
+            this.transports = transports
+        }.also { core = it }
     }
 
     // createAddress — единственный способ распарсить Address из строки в SDK 5.5.8.
     @Suppress("DEPRECATION")
     private fun Core.createSipAddress(uri: String): Address? = createAddress(uri)
 
+    // Регистрация на сервере при открытом приложении. Ошибки не показываем — экран
+    // набора не сообщает о фоновой регистрации; исходящий звонок повторит её сам.
+    override suspend fun startRegistration() {
+        configureAndRegister(silent = true)
+    }
+
+    // Снятие с регистрации при уходе приложения в фон/закрытии. Заодно сбрасывает
+    // входящий звонок и завершает активный вызов — вне приложения поток не держим.
+    override suspend fun stopRegistration() {
+        withContext(NonCancellable) {
+            registrationMutex.withLock {
+                try {
+                    Log.d(TAG, "Приложение закрыто — снимаем регистрацию")
+                    val hadActiveCall = currentCall != null
+                    currentCall?.runCatching { terminate() }
+                    currentCall = null
+                    stopRingTone()
+                    _incomingCaller.value = null
+
+                    core?.runCatching {
+                        clearAccounts()
+                        clearAllAuthInfo()
+                        stop()
+                    }
+                    core = null
+                    account = null
+                    registeredUri = null
+
+                    resetAudioForIdle()
+                    _isMuted.value = false
+                    _isSpeakerOn.value = false
+                    _isInCall.value = false
+                    _isRegistered.value = false
+                    if (hadActiveCall) {
+                        _isCallEnded.value = true
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Ошибка при снятии регистрации: ${e.localizedMessage}", e)
+                }
+            }
+        }
+    }
+
+    // Регистрация аккаунта с ожиданием результата. silent=true — для фоновой
+    // регистрации (без сообщений в callState), silent=false — при исходящем звонке.
+    private suspend fun configureAndRegister(silent: Boolean): Boolean =
+        registrationMutex.withLock {
+            val sipId = settingsRepository.getSipId()
+            val sipPassword = settingsRepository.getSipPassword()
+            val serverIp = settingsRepository.getServerIp()
+
+            if (sipId.isNullOrBlank() || sipPassword.isNullOrBlank()) {
+                if (!silent) _callState.value = "SIP ID или пароль не указаны"
+                return@withLock false
+            }
+            if (serverIp.isNullOrBlank()) {
+                if (!silent) _callState.value = "SIP-домен (IP сервера) не настроен"
+                return@withLock false
+            }
+
+            val identityUri = "sip:$sipId@$serverIp"
+            if (account != null && registeredUri == identityUri) {
+                // Уже зарегистрированы с теми же настройками
+                _isRegistered.value = true
+                return@withLock true
+            }
+
+            try {
+                val core = core ?: createCore()
+                core.start()
+
+                core.clearAccounts()
+                core.clearAllAuthInfo()
+
+                val authInfo = Factory.instance().createAuthInfo(
+                    sipId,
+                    null,
+                    sipPassword,
+                    null,
+                    serverIp,
+                    serverIp
+                )
+                core.addAuthInfo(authInfo)
+
+                val identityAddress = core.createSipAddress(identityUri)
+                val serverAddress = core.createSipAddress("sip:$serverIp;transport=udp")
+                if (identityAddress == null || serverAddress == null) {
+                    if (!silent) _callState.value = "Неверный формат SIP-адресов"
+                    return@withLock false
+                }
+
+                val accountParams = core.createAccountParams().apply {
+                    this.identityAddress = identityAddress
+                    this.serverAddress = serverAddress
+                    isRegisterEnabled = true
+                    setTransport(TransportType.Udp)
+                }
+                val created = core.createAccount(accountParams)
+                core.addAccount(created)
+                core.defaultAccount = created
+                account = created
+                registeredUri = identityUri
+                _isRegistered.value = false
+
+                Log.d(TAG, "Выполнение регистрации...")
+                core.refreshRegisters()
+                val deadline = System.currentTimeMillis() + REGISTRATION_TIMEOUT_MS
+                while (created.state !in REGISTRATION_TERMINAL_STATES &&
+                    System.currentTimeMillis() < deadline
+                ) {
+                    delay(REGISTRATION_POLL_MS)
+                }
+
+                return@withLock if (created.state == RegistrationState.Ok) {
+                    Log.d(TAG, "Регистрация успешна ($identityUri)")
+                    _isRegistered.value = true
+                    true
+                } else {
+                    Log.w(TAG, "Регистрация не удалась: ${created.state}")
+                    account = null
+                    registeredUri = null
+                    _isRegistered.value = false
+                    if (!silent) {
+                        _callState.value = when (created.state) {
+                            RegistrationState.Failed -> registrationFailureText(created, "")
+                            RegistrationState.Cleared -> "Регистрация отменена."
+                            else ->
+                                "Превышено время ожидания ответа сервера. Проверьте IP сервера и интернет."
+                        }
+                    }
+                    false
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "Ошибка регистрации: ${e.localizedMessage}", e)
+                account = null
+                registeredUri = null
+                _isRegistered.value = false
+                if (!silent) {
+                    _callState.value = if (isMeaningless(e.localizedMessage)) {
+                        "Не удалось зарегистрироваться на сервере."
+                    } else {
+                        "Ошибка: ${e.localizedMessage}"
+                    }
+                }
+                false
+            }
+        }
+
     // Проверка доступности сети
     private fun isNetworkAvailable(): Boolean {
-        val connectivityManager = context.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val connectivityManager =
+            appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
         val network = connectivityManager.activeNetwork ?: return false
         val capabilities = connectivityManager.getNetworkCapabilities(network) ?: return false
         return capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET)
     }
 
-    // Инициирование вызова
+    // Инициирование исходящего вызова
     override suspend fun makeCall(
         phoneNumber: String,
         sipId: String?,
@@ -87,16 +267,6 @@ class LinphoneSipController(private val context: Context) : SipCallController {
         val target = phoneNumber.trim()
         if (target.isEmpty()) {
             _callState.value = "Введите номер или SIP-адрес"
-            return false
-        }
-
-        val core = core ?: run {
-            _callState.value = "SIP не инициализирован"
-            return false
-        }
-
-        if (sipId.isNullOrBlank() || sipPassword.isNullOrBlank()) {
-            _callState.value = "SIP ID или пароль не указаны"
             return false
         }
         if (!isNetworkAvailable()) {
@@ -112,84 +282,28 @@ class LinphoneSipController(private val context: Context) : SipCallController {
         _isCallEnded.value = false
         _isInCall.value = false
         _isMuted.value = false
+        _isSpeakerOn.value = false
+        _callState.value = "Звонок..."
+        stopRingTone()
+        _incomingCaller.value = null
+
+        if (!configureAndRegister(silent = false)) return false
+        val core = core ?: return false
 
         try {
-            Log.d(TAG, "Инициализация SIP ядра...")
-            core.start()
-
-            core.clearAccounts()
-            core.clearAllAuthInfo()
-
-            val transports = core.transports
-            transports.udpPort = 5060
-            transports.tcpPort = 0
-            transports.tlsPort = 0
-            core.transports = transports
-            core.isNetworkReachable = true
-
-            val authInfo = Factory.instance().createAuthInfo(
-                sipId,
-                null,
-                sipPassword,
-                null,
-                serverIp,
-                serverIp
-            )
-            core.addAuthInfo(authInfo)
-            Log.d(TAG, "Данные аутентификации добавлены")
-
-            val identityAddress = core.createSipAddress("sip:$sipId@$serverIp")
-            val serverAddress = core.createSipAddress("sip:$serverIp;transport=udp")
-            if (identityAddress == null || serverAddress == null) {
-                _callState.value = "Неверный формат SIP-адресов"
-                releaseCallResources(core)
-                return false
-            }
-
-            val accountParams = core.createAccountParams().apply {
-                this.identityAddress = identityAddress
-                this.serverAddress = serverAddress
-                isRegisterEnabled = true
-                setTransport(TransportType.Udp)
-            }
-
-            val account = core.createAccount(accountParams)
-            core.addAccount(account)
-            core.defaultAccount = account
-            Log.d(TAG, "Аккаунт успешно настроен")
-
-            // Регистрация проходит в фоне; ждем терминального состояния вместо фиксированной задержки
-            Log.d(TAG, "Выполнение регистрации...")
-            core.refreshRegisters()
-            val deadline = System.currentTimeMillis() + REGISTRATION_TIMEOUT_MS
-            while (account.state !in REGISTRATION_TERMINAL_STATES && System.currentTimeMillis() < deadline) {
-                delay(REGISTRATION_POLL_MS)
-            }
-
-            if (account.state != RegistrationState.Ok) {
-                _callState.value = when (account.state) {
-                    RegistrationState.Failed -> registrationFailureText(account, "")
-                    RegistrationState.Cleared -> "Регистрация отменена."
-                    else -> "Превышено время ожидания ответа сервера. Проверьте IP сервера и интернет."
-                }
-                releaseCallResources(core)
-                return false
-            }
-
             Log.d(TAG, "Инициирование вызова...")
             val targetAddress = core.createSipAddress(toSipUri(target, serverIp))
             if (targetAddress == null) {
                 _callState.value = "Неверный формат номера или SIP URI"
-                releaseCallResources(core)
                 return false
             }
 
-            currentCall = core.inviteAddress(targetAddress)
-            if (currentCall == null) {
+            val call = core.inviteAddress(targetAddress)
+            if (call == null) {
                 _callState.value = "Не удалось начать вызов"
-                releaseCallResources(core)
                 return false
             }
+            currentCall = call
             return true
         } catch (e: Exception) {
             Log.e(TAG, "Критическая ошибка: ${e.localizedMessage}", e)
@@ -198,33 +312,66 @@ class LinphoneSipController(private val context: Context) : SipCallController {
             } else {
                 "Ошибка: ${e.localizedMessage}"
             }
-            core.runCatching { releaseCallResources(this) }
             return false
         }
     }
 
-    // Завершение вызова и освобождение ресурсов
+    // Завершение вызова. Регистрация сохраняется, чтобы на открытом приложении
+    // продолжали приходить входящие звонки.
     override suspend fun endCall() {
-        // NonCancellable: завершаем очистку, даже если вызвавший coroutine-скоп уже отменен
         withContext(NonCancellable) {
             try {
-                Log.d(TAG, "Очистка ресурсов...")
+                Log.d(TAG, "Завершение вызова...")
                 currentCall?.terminate()
                 currentCall = null
-                delay(500)
-
-                core?.runCatching { releaseCallResources(this) }
+                delay(300)
 
                 resetAudioForIdle()
+                stopRingTone()
                 _isMuted.value = false
                 _isSpeakerOn.value = false
                 _isInCall.value = false
                 _isCallEnded.value = true
-                Log.d(TAG, "Ресурсы успешно освобождены")
+                Log.d(TAG, "Вызов завершен")
             } catch (e: Exception) {
                 Log.e(TAG, "Ошибка при завершении вызова: ${e.localizedMessage}", e)
             }
         }
+    }
+
+    // Принять входящий звонок
+    override fun acceptIncomingCall() {
+        stopRingTone()
+        val call = currentCall ?: run {
+            _incomingCaller.value = null
+            return
+        }
+        _incomingCaller.value = null
+        Log.d(TAG, "Принимаем входящий звонок")
+        if (call.state == Call.State.IncomingReceived ||
+            call.state == Call.State.IncomingEarlyMedia
+        ) {
+            runCatching { call.accept() }
+                .onFailure { Log.e(TAG, "Не удалось принять вызов: ${it.localizedMessage}", it) }
+        }
+    }
+
+    // Отклонить входящий звонок
+    override fun declineIncomingCall() {
+        stopRingTone()
+        val call = currentCall
+        _incomingCaller.value = null
+        Log.d(TAG, "Отклоняем входящий звонок")
+        if (call != null) {
+            runCatching {
+                if (call.state == Call.State.IncomingReceived) {
+                    call.decline(Reason.Declined)
+                } else {
+                    call.terminate()
+                }
+            }
+        }
+        currentCall = null
     }
 
     // Управление микрофоном
@@ -311,10 +458,43 @@ class LinphoneSipController(private val context: Context) : SipCallController {
         }
     }
 
-    private fun releaseCallResources(core: Core) {
-        core.clearAccounts()
-        core.clearAllAuthInfo()
-        core.stop()
+    private fun startRingTone() {
+        stopRingTone()
+        ringPlayer = try {
+            MediaPlayer().apply {
+                setAudioAttributes(
+                    AudioAttributes.Builder()
+                        .setUsage(AudioAttributes.USAGE_NOTIFICATION_RINGTONE)
+                        .setContentType(AudioAttributes.CONTENT_TYPE_SONIFICATION)
+                        .build()
+                )
+                setDataSource(RingingTone.file(appContext).absolutePath)
+                isLooping = true
+                prepare()
+                start()
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Не удалось запустить рингтон: ${e.localizedMessage}", e)
+            null
+        }
+    }
+
+    private fun stopRingTone() {
+        ringPlayer?.runCatching {
+            if (isPlaying) stop()
+            release()
+        }
+        ringPlayer = null
+    }
+
+    // Имя/номер звонящего для экрана входящего звонка
+    private fun callerLabel(call: Call): String {
+        val remote = call.remoteAddress
+        val displayName = remote?.displayName
+        if (!displayName.isNullOrBlank()) return displayName
+        val username = remote?.username
+        if (!username.isNullOrBlank()) return username
+        return call.remoteAddressAsString?.takeIf { !isMeaningless(it) } ?: "Входящий звонок"
     }
 
     // Linphone отдает "None"/"null" вместо отсутствующего текста — считаем это пустотой.
@@ -404,23 +584,15 @@ class LinphoneSipController(private val context: Context) : SipCallController {
             }
             Log.d(TAG, "$logMessage для аккаунта ${account.params.identityAddress?.asStringUriOnly()}")
 
-            // None/Cleared приходят, когда мы сами чистим аккаунт после ошибки —
-            // не затираем ими понятное сообщение на экране.
-            val text = when (state) {
-                RegistrationState.Ok -> "Успешная регистрация"
-                RegistrationState.Failed -> logMessage
-                RegistrationState.Progress -> "Идет регистрация..."
-                else -> null
-            }
-            if (text != null) {
-                _callState.value = text
-            }
+            // Статус регистрации в callState не пишем: при открытом приложении экран
+            // звонка может отсутствовать, а во время вызова текст затирал бы статус разговора.
         }
 
         override fun onCallStateChanged(core: Core, call: Call, state: Call.State, message: String) {
             val logMessage = when (state) {
                 Call.State.Idle -> "Состояние вызова: Ожидание"
                 Call.State.IncomingReceived -> "Входящий вызов получен"
+                Call.State.IncomingEarlyMedia -> "Входящий вызов (медиа)"
                 Call.State.OutgoingInit -> "Инициализация исходящего вызова..."
                 Call.State.OutgoingProgress -> "Выполнение вызова..."
                 Call.State.OutgoingRinging -> "Вызов осуществляется..."
@@ -435,15 +607,41 @@ class LinphoneSipController(private val context: Context) : SipCallController {
                 else -> "Неизвестное состояние вызова: $state"
             }
             Log.d(TAG, logMessage)
-
             _callState.value = logMessage
 
-            if (state == Call.State.Connected || state == Call.State.StreamsRunning) {
-                configureAudioForCall()
+            when (state) {
+                Call.State.IncomingReceived, Call.State.IncomingEarlyMedia -> {
+                    if (_isInCall.value || currentCall != null) {
+                        // Уже заняты — отклоняем второй звонок (в режиме «абонент занят»)
+                        Log.d(TAG, "Уже в разговоре, отклоняем новый входящий")
+                        runCatching { call.decline(Reason.Busy) }
+                    } else {
+                        currentCall = call
+                        _isCallEnded.value = false
+                        _incomingCaller.value = callerLabel(call)
+                        startRingTone()
+                    }
+                }
+                Call.State.Connected, Call.State.StreamsRunning -> {
+                    if (_incomingCaller.value != null) {
+                        stopRingTone()
+                        _incomingCaller.value = null
+                    }
+                    configureAudioForCall()
+                }
+                Call.State.End, Call.State.Error, Call.State.Released -> {
+                    if (call == currentCall) {
+                        stopRingTone()
+                        _incomingCaller.value = null
+                        currentCall = null
+                    }
+                }
+                else -> Unit
             }
 
             _isInCall.value = state in IN_CALL_STATES
-            _isCallEnded.value = state == Call.State.End || state == Call.State.Error || state == Call.State.Released
+            _isCallEnded.value =
+                state == Call.State.End || state == Call.State.Error || state == Call.State.Released
         }
 
         override fun onAudioDeviceChanged(core: Core, device: AudioDevice) {

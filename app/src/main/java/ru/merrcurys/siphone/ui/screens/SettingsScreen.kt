@@ -76,7 +76,8 @@ private const val PROJECT_SOURCE_URL = "https://github.com/Merrcurys/SiPhone"
 fun SettingsScreen(
     themeMode: ThemeMode,
     onThemeModeChange: (ThemeMode) -> Unit,
-    onBack: () -> Unit = {}
+    onBack: () -> Unit = {},
+    onMockServerChange: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val settingsRepository = remember { SettingsRepository(context) }
@@ -253,6 +254,7 @@ fun SettingsScreen(
                         onCheckedChange = { checked ->
                             isMockServer = checked
                             settingsRepository.setMockServer(checked)
+                            onMockServerChange(checked)
                         }
                     )
                 }

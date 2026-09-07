@@ -27,13 +27,11 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,24 +49,24 @@ import androidx.compose.ui.unit.sp
 import ru.merrcurys.siphone.sip.SipManager
 import ru.merrcurys.siphone.ui.theme.appTheme
 import kotlinx.coroutines.delay
-import kotlinx.coroutines.launch
 
 @Composable
 fun CallScreen(
     phoneNumber: String,
     sipId: String?,
     sipPassword: String?,
-    onHangup: () -> Unit
+    onHangup: () -> Unit,
+    sipManager: SipManager? = null,
+    autoDial: Boolean = true
 ) {
     val context = LocalContext.current
-    val coroutineScope = rememberCoroutineScope()
-    val sipManager = remember { SipManager(context) }
+    val manager = sipManager ?: remember { SipManager(context.applicationContext) }
 
-    val callStateText by sipManager.callState.collectAsState()
-    val isInCall by sipManager.isInCall.collectAsState()
-    val isMuted by sipManager.isMuted.collectAsState()
-    val isSpeakerOn by sipManager.isSpeakerOn.collectAsState()
-    val isCallEnded by sipManager.isCallEnded.collectAsState()
+    val callStateText by manager.callState.collectAsState()
+    val isInCall by manager.isInCall.collectAsState()
+    val isMuted by manager.isMuted.collectAsState()
+    val isSpeakerOn by manager.isSpeakerOn.collectAsState()
+    val isCallEnded by manager.isCallEnded.collectAsState()
 
     // Таймер длительности разговора, отсчитывается после ответа собеседника
     var callDurationSeconds by remember { mutableStateOf(0) }
@@ -89,33 +87,16 @@ fun CallScreen(
         colors = listOf(scheme.primary, scheme.secondary)
     )
 
-    fun hangup() {
-        coroutineScope.launch {
-            sipManager.endCall()
+    LaunchedEffect(phoneNumber, sipId, sipPassword, autoDial) {
+        if (autoDial) {
+            manager.makeCall(phoneNumber, sipId, sipPassword)
         }
-        onHangup()
-    }
-
-    LaunchedEffect(Unit) {
-        sipManager.initCore()
-    }
-
-    LaunchedEffect(phoneNumber, sipId, sipPassword) {
-        sipManager.makeCall(phoneNumber, sipId, sipPassword)
     }
 
     LaunchedEffect(isCallEnded) {
         if (isCallEnded) {
             delay(2000)
             onHangup()
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
-            coroutineScope.launch {
-                sipManager.endCall()
-            }
         }
     }
 
@@ -226,7 +207,7 @@ fun CallScreen(
                         )
                     },
                     active = isMuted,
-                    onClick = { sipManager.toggleMute() }
+                    onClick = { manager.toggleMute() }
                 )
 
                 Box(
@@ -249,7 +230,7 @@ fun CallScreen(
                             .size(74.dp)
                             .clip(CircleShape)
                             .background(scheme.error)
-                            .clickable(onClick = ::hangup),
+                            .clickable(onClick = onHangup),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
@@ -279,7 +260,7 @@ fun CallScreen(
                         )
                     },
                     active = isSpeakerOn,
-                    onClick = { sipManager.toggleSpeaker() }
+                    onClick = { manager.toggleSpeaker() }
                 )
             }
 

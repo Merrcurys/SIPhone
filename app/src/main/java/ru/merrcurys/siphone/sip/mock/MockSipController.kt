@@ -32,10 +32,24 @@ class MockSipController(private val context: Context) : SipCallController {
     private val _isCallEnded = MutableStateFlow(false)
     override val isCallEnded: StateFlow<Boolean> = _isCallEnded
 
+    private val _isRegistered = MutableStateFlow(false)
+    override val isRegistered: StateFlow<Boolean> = _isRegistered
+
+    private val _incomingCaller = MutableStateFlow<String?>(null)
+    override val incomingCaller: StateFlow<String?> = _incomingCaller
+
     private val mockScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var mockCallJob: Job? = null
 
     override fun initCore() = Unit
+
+    override suspend fun startRegistration() = Unit
+
+    override suspend fun stopRegistration() = Unit
+
+    override fun acceptIncomingCall() = Unit
+
+    override fun declineIncomingCall() = Unit
 
     override suspend fun makeCall(
         phoneNumber: String,
