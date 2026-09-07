@@ -8,6 +8,9 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -46,9 +49,11 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
-import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.tooling.preview.Preview
 import androidx.compose.ui.unit.TextUnit
 import androidx.compose.ui.unit.dp
@@ -69,7 +74,8 @@ fun DialScreen(
     onOpenSettings: () -> Unit = {},
     onStartCall: (String) -> Unit = {}
 ) {
-    var phoneNumber by remember { mutableStateOf("") }
+    var input by remember { mutableStateOf("") }
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     val scheme = MaterialTheme.colorScheme
 
@@ -146,20 +152,25 @@ fun DialScreen(
             Spacer(modifier = Modifier.weight(0.3f))
 
             NumberHero(
-                phoneNumber = phoneNumber,
-                onDelete = { phoneNumber = phoneNumber.dropLast(1) },
-                onClear = { phoneNumber = "" }
+                input = input,
+                onInputChange = { newValue -> input = sanitizeCallInput(newValue) },
+                onDelete = { input = input.dropLast(1) },
+                onClear = { input = "" },
+                onCall = { if (input.isNotEmpty()) onStartCall(input.trim()) }
             )
 
             Spacer(modifier = Modifier.weight(0.55f))
 
-            DialPad(onDigitClick = { digit -> phoneNumber += digit })
+            DialPad(onDigitClick = { digit -> input += digit })
 
             Spacer(modifier = Modifier.weight(1f))
 
             CallButton(
-                enabled = phoneNumber.isNotEmpty(),
-                onClick = { onStartCall(phoneNumber) }
+                enabled = input.isNotEmpty(),
+                onClick = {
+                    keyboardController?.hide()
+                    onStartCall(input.trim())
+                }
             )
 
             Spacer(modifier = Modifier.height(20.dp))
@@ -170,12 +181,15 @@ fun DialScreen(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun NumberHero(
-    phoneNumber: String,
+    input: String,
+    onInputChange: (String) -> Unit,
     onDelete: () -> Unit,
-    onClear: () -> Unit
+    onClear: () -> Unit,
+    onCall: () -> Unit
 ) {
     val scheme = MaterialTheme.colorScheme
-    val hasNumber = phoneNumber.isNotEmpty()
+    val hasInput = input.isNotEmpty()
+    val keyboardController = LocalSoftwareKeyboardController.current
 
     val heroBrush = Brush.verticalGradient(
         colors = listOf(scheme.primary, scheme.secondary)
@@ -213,22 +227,41 @@ private fun NumberHero(
                 .padding(horizontal = 12.dp),
             verticalAlignment = Alignment.CenterVertically
         ) {
-            Text(
-                text = if (hasNumber) phoneNumber else "Введите номер",
-                fontSize = if (hasNumber) {
-                    numberFontSize(phoneNumber.length)
-                } else {
-                    18.sp
-                },
-                fontWeight = if (hasNumber) FontWeight.Bold else FontWeight.Medium,
-                color = Color.White.copy(alpha = if (hasNumber) 1f else 0.85f),
+            Box(
                 modifier = Modifier.weight(1f),
-                textAlign = TextAlign.Center,
-                maxLines = 2,
-                overflow = TextOverflow.Ellipsis
-            )
+                contentAlignment = Alignment.Center
+            ) {
+                if (!hasInput) {
+                    Text(
+                        text = "Номер или SIP-адрес",
+                        fontSize = 17.sp,
+                        fontWeight = FontWeight.Medium,
+                        color = Color.White.copy(alpha = 0.85f)
+                    )
+                }
+                BasicTextField(
+                    value = input,
+                    onValueChange = onInputChange,
+                    modifier = Modifier.fillMaxWidth(),
+                    textStyle = TextStyle(
+                        fontSize = numberFontSize(input.length),
+                        fontWeight = FontWeight.Bold,
+                        color = Color.White,
+                        textAlign = TextAlign.Center
+                    ),
+                    maxLines = 2,
+                    cursorBrush = androidx.compose.ui.graphics.SolidColor(Color.White),
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Done),
+                    keyboardActions = KeyboardActions(
+                        onDone = {
+                            keyboardController?.hide()
+                            onCall()
+                        }
+                    )
+                )
+            }
 
-            if (hasNumber) {
+            if (hasInput) {
                 Box(
                     modifier = Modifier
                         .size(40.dp)
@@ -253,6 +286,10 @@ private fun NumberHero(
         }
     }
 }
+
+// Разрешаем цифры и буквы (никнейм/SIP URI), плюс служебные символы адреса.
+private fun sanitizeCallInput(value: String): String =
+    value.filter { it.isLetterOrDigit() || it in "@._%+-:/#*" }
 
 @Composable
 private fun numberFontSize(length: Int): TextUnit = when {

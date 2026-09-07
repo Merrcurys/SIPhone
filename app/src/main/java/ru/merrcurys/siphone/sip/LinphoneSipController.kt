@@ -85,6 +85,10 @@ class LinphoneSipController(private val context: Context) : SipCallController {
         sipPassword: String?
     ): Boolean {
         val target = phoneNumber.trim()
+        if (target.isEmpty()) {
+            _callState.value = "Введите номер или SIP-адрес"
+            return false
+        }
 
         val core = core ?: run {
             _callState.value = "SIP не инициализирован"
@@ -173,9 +177,9 @@ class LinphoneSipController(private val context: Context) : SipCallController {
             }
 
             Log.d(TAG, "Инициирование вызова...")
-            val targetAddress = core.createSipAddress("sip:$target@$serverIp")
+            val targetAddress = core.createSipAddress(toSipUri(target, serverIp))
             if (targetAddress == null) {
-                _callState.value = "Неверный формат номера получателя"
+                _callState.value = "Неверный формат номера или SIP URI"
                 releaseCallResources(core)
                 return false
             }
@@ -316,6 +320,19 @@ class LinphoneSipController(private val context: Context) : SipCallController {
     // Linphone отдает "None"/"null" вместо отсутствующего текста — считаем это пустотой.
     private fun isMeaningless(value: String?): Boolean =
         value.isNullOrBlank() || value == "None" || value == "null"
+
+    // Приводит введённый текст к SIP URI для вызова:
+    // номер или никнейм -> sip:<адрес>@<домен сервера>,
+    // полный sip:/sips: URI оставляем как есть, "user@host" дополняем схемой.
+    private fun toSipUri(target: String, domain: String): String {
+        val trimmed = target.trim()
+        if (trimmed.startsWith("sip:", ignoreCase = true) ||
+            trimmed.startsWith("sips:", ignoreCase = true)
+        ) {
+            return trimmed
+        }
+        return if ('@' in trimmed) "sip:$trimmed" else "sip:$trimmed@$domain"
+    }
 
     // Понятное сообщение при неудачной регистрации аккаунта.
     private fun registrationFailureText(account: Account, raw: String): String {
