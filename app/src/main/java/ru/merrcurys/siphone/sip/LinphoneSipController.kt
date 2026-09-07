@@ -2,11 +2,9 @@ package ru.merrcurys.siphone.sip
 
 import android.content.Context
 import android.content.pm.ApplicationInfo
-import android.media.AudioDeviceInfo
 import android.media.AudioManager
 import android.net.ConnectivityManager
 import android.net.NetworkCapabilities
-import android.os.Build
 import android.util.Log
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.delay
@@ -15,6 +13,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.withContext
 import org.linphone.core.Account
 import org.linphone.core.Address
+import org.linphone.core.AudioDevice
 import org.linphone.core.Call
 import org.linphone.core.Core
 import org.linphone.core.CoreListenerStub
@@ -226,11 +225,54 @@ class LinphoneSipController(private val context: Context) : SipCallController {
         Log.d(TAG, "Микрофон ${if (_isMuted.value) "выключен" else "включен"}")
     }
 
-    // Управление громкой связью
+    // Управление громкой связью. Переключать звук на динамик напрямую через
+    // AudioManager.isSpeakerphoneOn нельзя: ядро Linphone само владеет маршрутизацией
+    // аудио и перезапишет такой выбор. Поэтому меняем устройство вывода через API ядра.
     override fun toggleSpeaker() {
-        _isSpeakerOn.value = !_isSpeakerOn.value
-        setSpeakerphoneOn(_isSpeakerOn.value)
+        val enabled = !_isSpeakerOn.value
+        if (setSpeakerEnabled(enabled)) {
+            _isSpeakerOn.value = enabled
+        }
     }
+
+    // Переключение устройства вывода. Возвращает true, если маршрут применён
+    // или менять ничего не требуется.
+    private fun setSpeakerEnabled(enabled: Boolean): Boolean {
+        val core = core ?: return false
+        val target = if (enabled) {
+            findOutputDevice(core, AudioDevice.Type.Speaker) ?: run {
+                Log.w(TAG, "Динамик недоступен в списке аудиоустройств ядра")
+                return false
+            }
+        } else {
+            // Возврат к обычному устройству (наушник/BT/проводная гарнитура),
+            // которое ядро выбрало бы по умолчанию.
+            val defaultDevice = core.defaultOutputAudioDevice
+            if (defaultDevice != null && defaultDevice.type != AudioDevice.Type.Speaker) {
+                defaultDevice
+            } else {
+                findOutputDevice(core, AudioDevice.Type.Earpiece) ?: return true
+            }
+        }
+        return try {
+            val call = currentCall
+            if (call != null) {
+                call.outputAudioDevice = target
+            } else {
+                core.outputAudioDevice = target
+            }
+            true
+        } catch (e: Exception) {
+            Log.e(TAG, "Не удалось переключить устройство вывода: ${e.localizedMessage}", e)
+            false
+        }
+    }
+
+    private fun findOutputDevice(core: Core, type: AudioDevice.Type): AudioDevice? =
+        (core.extendedAudioDevices.asSequence() + core.audioDevices.asSequence())
+            .firstOrNull {
+                it.type == type && it.hasCapability(AudioDevice.Capabilities.CapabilityPlay)
+            }
 
     // Настройка аудио при установлении соединения
     private fun configureAudioForCall() {
@@ -241,7 +283,11 @@ class LinphoneSipController(private val context: Context) : SipCallController {
                 _isMuted.value = false
                 Log.d(TAG, "Микрофон включен при установлении соединения")
             }
-            setSpeakerphoneOn(_isSpeakerOn.value)
+            // Если громкую связь включили до старта медиапотока, повторяем выбор
+            // динамика: при запуске потока ядро выбирает маршрут вывода самостоятельно.
+            if (_isSpeakerOn.value && !setSpeakerEnabled(true)) {
+                _isSpeakerOn.value = false
+            }
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка при настройке аудио: ${e.localizedMessage}", e)
         }
@@ -249,29 +295,9 @@ class LinphoneSipController(private val context: Context) : SipCallController {
 
     private fun resetAudioForIdle() {
         try {
-            setSpeakerphoneOn(false)
             audioManager.mode = AudioManager.MODE_NORMAL
         } catch (e: Exception) {
             Log.e(TAG, "Ошибка при сбросе аудио: ${e.localizedMessage}", e)
-        }
-    }
-
-    // isSpeakerphoneOn помечен deprecated в API 34; на Android 12+ используем
-    // communication device (динамик), на старых версиях — прежний способ.
-    private fun setSpeakerphoneOn(enabled: Boolean) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-            if (enabled) {
-                val speaker = audioManager.availableCommunicationDevices
-                    .firstOrNull { it.type == AudioDeviceInfo.TYPE_BUILTIN_SPEAKER }
-                if (speaker != null) {
-                    audioManager.setCommunicationDevice(speaker)
-                }
-            } else {
-                audioManager.clearCommunicationDevice()
-            }
-        } else {
-            @Suppress("DEPRECATION")
-            audioManager.isSpeakerphoneOn = enabled
         }
     }
 
@@ -394,6 +420,11 @@ class LinphoneSipController(private val context: Context) : SipCallController {
             }
 
             _isCallEnded.value = state == Call.State.End || state == Call.State.Error || state == Call.State.Released
+        }
+
+        override fun onAudioDeviceChanged(core: Core, device: AudioDevice) {
+            Log.d(TAG, "Аудиоустройство изменено: ${device.type}")
+            _isSpeakerOn.value = device.type == AudioDevice.Type.Speaker
         }
     }
 
