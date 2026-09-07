@@ -2,6 +2,7 @@ package ru.merrcurys.siphone.ui.components
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -83,6 +84,7 @@ fun CallScreen(
     }
 
     val scheme = MaterialTheme.colorScheme
+    val screenInteractionSource = remember { MutableInteractionSource() }
     val background = Brush.verticalGradient(
         colors = listOf(scheme.primary, scheme.secondary)
     )
@@ -120,6 +122,13 @@ fun CallScreen(
     Box(
         modifier = Modifier
             .fillMaxSize()
+            .clickable(
+                interactionSource = screenInteractionSource,
+                indication = null,
+                // Перехватываем тапы, чтобы они не проходили сквозь экран звонка
+                // на лежащий под ним экран набора номера.
+                onClick = {}
+            )
             .background(background)
             .drawBehind {
                 drawCircle(
