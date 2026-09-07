@@ -1,5 +1,6 @@
 package ru.merrcurys.siphone.ui.screens
 
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -95,6 +96,15 @@ fun ContactsTabScreen(
             selectedContactId = openContactId
             isAdding = false
             onOpenContactConsumed()
+        }
+    }
+
+    // Жест «Назад» внутри вкладки контактов: из карточки/формы — обратно к списку
+    BackHandler(enabled = selectedContactId != null || isAdding) {
+        if (selectedContactId != null) {
+            selectedContactId = null
+        } else if (isAdding) {
+            isAdding = false
         }
     }
 

@@ -15,6 +15,7 @@ import androidx.core.content.ContextCompat
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -44,6 +45,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
@@ -196,6 +198,12 @@ fun MainScreen(
         sipManager.declineIncomingCall()
     }
 
+    // Жест «Назад» на вкладках «Контакты»/«Настройки» (без открытых карточек —
+    // они перехватывают назад внутри себя) возвращает на вкладку «Вызов»
+    BackHandler(enabled = selectedTab != TAB_CALL && activeCallNumber == null && incomingCaller == null) {
+        selectedTab = TAB_CALL
+    }
+
     Box(
         modifier = Modifier
             .fillMaxSize()
@@ -217,7 +225,16 @@ fun MainScreen(
                     onSelect = { selectedTab = it }
                 )
 
-            when (selectedTab) {
+                // Свайп влево/вправо по содержимому переключает вкладки
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .fillMaxWidth()
+                        .tabSwipeNavigation { delta ->
+                            selectedTab = (selectedTab + delta).coerceIn(TAB_CALL, TAB_SETTINGS)
+                        }
+                ) {
+                    when (selectedTab) {
                 TAB_CALL -> CallTabScreen(
                     contactsRepository = contactsRepository,
                     callHistoryRepository = callHistoryRepository,
@@ -231,13 +248,13 @@ fun MainScreen(
                         selectedTab = TAB_CONTACTS
                     },
                     onLongPressRecord = { menuRecord = it },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.fillMaxSize()
                 )
                 TAB_CONTACTS -> ContactsTabScreen(
                     contactsRepository = contactsRepository,
                     callHistoryRepository = callHistoryRepository,
                     onStartCall = startCall,
-                    modifier = Modifier.weight(1f),
+                    modifier = Modifier.fillMaxSize(),
                     prefillAddress = pendingAddContact,
                     onPrefillConsumed = { pendingAddContact = null },
                     openContactId = pendingOpenContactId,
@@ -252,8 +269,9 @@ fun MainScreen(
                         }
                         mockServer = enabled
                     },
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier.fillMaxSize()
                 )
+            }
             }
             }
         }
@@ -319,6 +337,28 @@ fun MainScreen(
         }
     }
 }
+
+// Горизонтальный свайп по содержимому вкладок. direction: -1 вправо (назад), +1 влево (вперёд)
+private fun Modifier.tabSwipeNavigation(onSwipe: (direction: Int) -> Unit): Modifier =
+    pointerInput(Unit) {
+        var totalDrag = 0f
+        detectHorizontalDragGestures(
+            onDragStart = { totalDrag = 0f },
+            onHorizontalDrag = { change, dragAmount ->
+                change.consume()
+                totalDrag += dragAmount
+            },
+            onDragEnd = {
+                val threshold = 90.dp.toPx()
+                val direction = when {
+                    totalDrag > threshold -> -1 // свайп вправо — предыдущая вкладка
+                    totalDrag < -threshold -> 1 // свайп влево — следующая вкладка
+                    else -> 0
+                }
+                if (direction != 0) onSwipe(direction)
+            }
+        )
+    }
 
 @Composable
 private fun TopTabs(selected: Int, onSelect: (Int) -> Unit) {
